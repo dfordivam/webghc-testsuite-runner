@@ -16,8 +16,9 @@ import           Test.Framework
 import           Data.Char (isLower, toLower, isDigit, isSpace)
 import           Filesystem.Path.CurrentOS (fromText, toText, encodeString)
 import           Data.Maybe
--- import qualified Control.Exception as C
-import qualified Control.Monad.Catch as C
+import           System.Timeout (timeout)
+import qualified Control.Exception as C
+-- import qualified Control.Monad.Catch as C
 
 default (T.Text)
 
@@ -45,7 +46,7 @@ doOneTest fp = shelly . verbosely $ do
   o2 <- compileRunWasm fp
   o1 <- compileRunGhc fp
 
-  return $ testCase "" (assertEqual "" o1 o2)
+  return $ testCase (show fp) (assertEqual "" o1 o2)
 
 compileRunGhc fp = do
   cd (directory fp)
@@ -54,11 +55,14 @@ compileRunGhc fp = do
       comp = do
         run_ "ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
         return (Right ())
-  v <- comp `C.catch`  \(e :: C.SomeException) -> return (Left ())
+      exec = do
+        o <- run exe []
+        return (Right o)
+
+  v <- comp `catch_sh`  \(e :: C.SomeException) -> return (Left ())
   case v of
-    (Right _) -> do
-      o <- run exe []
-      return (Right o)
+    (Right _) ->
+      exec `catch_sh`  \(e :: C.SomeException) -> return (Left "Runtime error")
     (Left ()) -> return $ Left "Compilation error"
 
 
@@ -67,13 +71,17 @@ compileRunWasm fp = do
   cd (directory fp)
   let exe = replaceExtension fp "wasm"
       out = replaceExtension fp "wasm_out"
-      comp = do
+      comp = liftIO $ timeout 10000000 $ shelly $ do
         run_ "wasm32-unknown-unknown-wasm-ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
         return (Right ())
-  v <- comp `C.catch`  \(e :: C.SomeException) -> return (Left ())
+      exec = do
+        cd "/home/divam/repos/wasm/webabi/"
+        o <- run "node" [ "run_node.js", toTextIgnore exe]
+        return (Right o)
+
+  v <- comp `catch_sh`  \(e :: C.SomeException) -> return (Just $ Left ())
   case v of
-    (Right _) -> do
-      cd "/home/divam/repos/wasm/webabi/"
-      o <- run "node" [ "run_node.js", toTextIgnore exe]
-      return (Right o)
-    (Left ()) -> return $ Left "Compilation error"
+    Nothing -> return $ Left "Linking timeout"
+    (Just (Right _)) -> do
+      exec `catch_sh`  \(e :: C.SomeException) -> return (Left "Runtime error")
+    (Just (Left ())) -> return $ Left "Compilation error"
