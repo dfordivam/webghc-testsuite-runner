@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 module Main where
 
@@ -15,6 +16,8 @@ import           Test.Framework
 import           Data.Char (isLower, toLower, isDigit, isSpace)
 import           Filesystem.Path.CurrentOS (fromText, toText, encodeString)
 import           Data.Maybe
+-- import qualified Control.Exception as C
+import qualified Control.Monad.Catch as C
 
 default (T.Text)
 
@@ -26,10 +29,8 @@ doGhcTests = do
 
   -- liftIO $ print hsSrcs
   -- mapM doOneTest hsSrcs
-  t <- doOneTest (head hsSrcs)
-  liftIO $ defaultMain [t]
-
-
+  -- t <- doOneTest (head hsSrcs)
+  liftIO $ defaultMain $ map (buildTest . doOneTest) hsSrcs
 
 isHsLhs fp = return $ isTestFile fp
   where
@@ -39,24 +40,40 @@ isHsLhs fp = return $ isTestFile fp
       ((maybe False testFirstChar . listToMaybe . encodeString . basename $ file) ||
       (basename file == "Main"))
 
-doOneTest :: FilePath -> Sh Test
-doOneTest fp = do
-  o1 <- compileRunGhc fp
-
+doOneTest :: FilePath -> IO Test
+doOneTest fp = shelly . verbosely $ do
   o2 <- compileRunWasm fp
+  o1 <- compileRunGhc fp
 
   return $ testCase "" (assertEqual "" o1 o2)
 
 compileRunGhc fp = do
+  cd (directory fp)
   let exe = replaceExtension fp "ghc"
       out = replaceExtension fp "ghc_out"
-  run_ "ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
-  run exe []
+      comp = do
+        run_ "ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
+        return (Right ())
+  v <- comp `C.catch`  \(e :: C.SomeException) -> return (Left ())
+  case v of
+    (Right _) -> do
+      o <- run exe []
+      return (Right o)
+    (Left ()) -> return $ Left "Compilation error"
+
 
 
 compileRunWasm fp = do
+  cd (directory fp)
   let exe = replaceExtension fp "wasm"
       out = replaceExtension fp "wasm_out"
-  run_ "wasm32-unknown-unknown-wasm-ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
-  cd "/home/divam/repos/wasm/webabi/"
-  run "node" [ "run_node.js", toTextIgnore exe]
+      comp = do
+        run_ "wasm32-unknown-unknown-wasm-ghc" [toTextIgnore fp, "-o", toTextIgnore exe]
+        return (Right ())
+  v <- comp `C.catch`  \(e :: C.SomeException) -> return (Left ())
+  case v of
+    (Right _) -> do
+      cd "/home/divam/repos/wasm/webabi/"
+      o <- run "node" [ "run_node.js", toTextIgnore exe]
+      return (Right o)
+    (Left ()) -> return $ Left "Compilation error"

@@ -19,6 +19,7 @@ executable ghc-wasm-testsuite
   main-is:             Main.hs
   -- other-modules:       
   -- other-extensions:    
+  ghc-options:      -threaded
   build-depends:       base >=4.10 && <5
                        , shelly
                        , text
@@ -26,5 +27,6 @@ executable ghc-wasm-testsuite
                        , HUnit
                      , test-framework
                      , test-framework-hunit
+                     , exceptions
   -- hs-source-dirs:      
   default-language:    Haskell2010
